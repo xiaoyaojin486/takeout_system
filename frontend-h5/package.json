@@ -1,0 +1,23 @@
+{
+  "name": "frontend-h5",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "外卖系统顾客端移动 H5",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5173"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "pinia": "^2.2.6",
+    "vant": "^4.9.15",
+    "vue": "^3.5.13",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^5.4.11"
+  }
+}

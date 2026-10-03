@@ -1,0 +1,91 @@
+server:
+  port: 8080
+  # 统一 /api 前缀，AuthenticationFilter 白名单里按 /api/** 配置
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: takeout-server
+  # 密钥类配置统一来自项目根目录 .env（KEY=VALUE 即 properties 格式）
+  # 两个位置都尝试：backend/ 下启动读 ../.env，项目根目录启动读 .env
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:takeout}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+  # 建表与演示数据：脚本幂等，可反复执行
+  sql:
+    init:
+      mode: ${SQL_INIT_MODE:always}
+      schema-locations: classpath:sql/schema.sql
+      data-locations: classpath:sql/data.sql
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      logic-delete-field: delFlag
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+takeout:
+  # 缓存实现：local(内存，开发零依赖) / redis(生产推荐)
+  # 登录缓存、refresh token、黑名单、限流、防重统一走 CacheClient，切换实现不改业务代码
+  cache:
+    type: ${CACHE_TYPE:local}
+  jwt:
+    # 生产环境务必通过 .env 的 JWT_SECRET 注入；此处默认值仅供本地开发
+    secret: ${JWT_SECRET:takeout-dev-only-secret-key-change-me-in-production-2026}
+    access-token-ttl: ${ACCESS_TOKEN_TTL:30m}
+    refresh-token-ttl: ${REFRESH_TOKEN_TTL:7d}
+  security:
+    # 无需登录即可访问的路径（context-path=/api，此处不含前缀）
+    whitelist:
+      - /auth/login
+      - /auth/refresh
+      - /customer/user/register
+      - /v3/api-docs/**
+      - /swagger-ui/**
+      - /swagger-ui.html
+      - /doc.html
+      - /error
+      - /favicon.ico
+      - /upload/**
+  file:
+    upload-path: ${UPLOAD_PATH:./upload}
+    access-prefix: /upload
+  order:
+    # 未支付订单超时自动取消（分钟）
+    pay-timeout-minutes: 15
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.takeout: info
