@@ -221,6 +221,10 @@ CREATE TABLE IF NOT EXISTS order_item
 
 -- ---------------------------------------------------------------------
 -- 9. 支付单表
+--    order_id 用【唯一索引】而非普通索引：一个订单只能有一条支付单。
+--    原因：PaymentServiceImpl.createIfAbsent 是「先按 orderId 查、没有就插入」，
+--    这中间存在并发窗口，两个并发支付请求可能各插一条。
+--    应用层靠订单状态的乐观锁拦住，这里再用数据库唯一约束兜底一层。
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS payment
 (
@@ -240,7 +244,7 @@ CREATE TABLE IF NOT EXISTS payment
     del_flag    TINYINT        NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     UNIQUE KEY uk_pay_no (pay_no),
-    KEY idx_order_id (order_id),
+    UNIQUE KEY uk_order_id (order_id),
     KEY idx_user_id (user_id)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='支付单表';
