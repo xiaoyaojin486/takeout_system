@@ -245,11 +245,13 @@ private void accumulateSales(Order order) {
 
 ## ⑥ order 特有的坑
 
-### 坑 1：⚠️ 状态变更缺少乐观锁（代码审查发现的并发窗口）
+### 坑 1：⚠️ 状态变更曾缺少乐观锁（已修复，附并发验证）
 
-**先说结论**：这是一个**真实的并发缺陷**，但在时序操作下不会出现（冒烟测试 55 项全通过也验证了这一点）。它会出现在**真正并发**的场景里，比如用户双击「取消订单」。
+**先说结论**：这是一个**真实的并发缺陷**，在时序操作下不会出现（冒烟测试 55 项全通过也验证了这一点），但会出现在**真正并发**的场景里，比如用户双击「取消订单」。
 
-看 `transfer()` 里的写入：
+**已在 commit `f629224` 修复**。这个坑仍然值得完整读一遍——它演示的 **TOCTOU** 规律适用于所有涉及状态、库存、余额的代码。
+
+**修复前** `transfer()` 里的写入长这样（下面整段分析都基于这段旧代码）：
 
 ```java
 Order update = new Order();
@@ -283,22 +285,44 @@ updateById(status = 60)              updateById(status = 60)
 
 **注意这个缺陷的特殊性**：`transfer()` 里的状态校验是**读时校验**（校验的是内存里那个 `order` 对象的状态），而**写的时候没有再次确认**。「检查」和「执行」之间有时间窗，这就是经典的 **TOCTOU（Time-of-Check to Time-of-Use）** 问题。
 
-**修复方向**（乐观锁，把状态作为 UPDATE 的前置条件）：
+**修复方式**（乐观锁：把原状态作为 UPDATE 的前置条件。这是代码里现在的实际写法）：
 
 ```java
-int affected = orderMapper.update(null, Wrappers.<Order>lambdaUpdate()
-        .set(Order::getStatus, target.getCode())
-        .set(Order::getCancelTime, now)
-        .set(Order::getCancelReason, remark)
+LocalDateTime now = LocalDateTime.now();
+Order update = new Order();
+update.setStatus(target.getCode());
+// ...（按目标状态打时间戳，同前）
+
+// 把「原状态」也作为 WHERE 条件（乐观锁）
+int affected = orderMapper.update(update, Wrappers.<Order>lambdaUpdate()
         .eq(Order::getId, order.getId())
         .eq(Order::getStatus, from));          // ← 关键：状态必须还是读取时的那个
 if (affected == 0) {
-    // 说明在我读取之后、写入之前，已经有别的请求改过状态了
-    throw new BusinessException(ResultCode.ORDER_STATUS_ERROR, "订单状态已被其他操作变更，请刷新后重试");
+    log.warn("订单状态并发冲突，已放弃本次流转 orderId={} from={} to={}",
+            order.getId(), from, target.getCode());
+    throw new BusinessException(ResultCode.ORDER_STATUS_ERROR,
+            "订单状态已被其他操作变更，请刷新后重试");
 }
+order.setStatus(target.getCode());
 ```
 
-另一个方案是 `SELECT ... FOR UPDATE` 悲观锁，但订单表并发不算高，乐观锁更轻、也不用担心锁等待。
+**为什么用 `update(实体, wrapper)` 而不是 `update(null, wrapper)`**：MyBatis-Plus 的自动填充（`AuditMetaObjectHandler.updateFill`）需要一个**实体对象**才能写 `update_time` / `update_by`。传 `null` 会导致审计字段不再更新。所以：**实体负责「要设置什么值」，wrapper 负责「满足什么条件才更新」**。
+
+> 另一个可选方案是 `SELECT ... FOR UPDATE` 悲观锁，但订单表并发不算高，乐观锁更轻、也不用担心锁等待。
+
+**这个修复被真实验证过**（并发验证，非时序测试）：
+
+```
+对同一笔待支付订单，用 HttpClient 并发发 6 个取消请求
+→ 后端日志出现 5 条「订单状态并发冲突，已放弃本次流转 orderId=8 from=10 to=60」
+   ↑ 注意 5 条全是 from=10，证明这 6 个请求确实同时读到了 status=10（竞态窗口被真实命中）
+→ 最终只有 1 个请求成功，库存只归还一次（90 → 91，而不是 90 → 96）
+→ order_status_log 里只有一条流转记录（10 → 60）
+```
+
+**修复前**这 6 个请求会全部通过 `canTransfer(10→60)` 校验、各自执行一次还库存 —— 库存被归还 6 次。
+
+> 💡 这个验证方法本身也值得学：**要证明并发保护有效，不能只跑时序测试**，必须真的并发发请求，并去日志里确认「竞态窗口被命中过」。否则测试通过只能说明「没坏」，不能说明「修好了」。
 
 > **为什么这个坑值得单独写一段**：它演示了一个通用规律——**任何「先读判断、再写更新」的代码，都天然存在并发窗口**。凡是涉及状态流转、库存、余额的地方，写之前都要问一句：**我这次写入，有没有校验「我读到的前提还成立」？**
 >
@@ -364,15 +388,16 @@ for (Order order : orders) {
 
 **拆成两个类就能通过代理调用**，事务正常生效。这是 Spring 项目里极高频的坑，看到「定时任务 + 事务方法」的组合就要警觉。
 
-### 坑 6（关联）：支付单可能被重复创建
+### 坑 6（关联）：支付单可能被重复创建（已修复）
 
-`payment` 表主键之外只有 `uk_pay_no`（支付单号唯一）和 `idx_order_id`（**普通索引，不是唯一**，见 `schema.sql` 第 243 行）。
+`payment` 表原先只有 `uk_pay_no`（支付单号唯一）和 `idx_order_id`（**普通索引，不是唯一**）。
 
 `PaymentServiceImpl.createIfAbsent()` 的逻辑是「先按 orderId 查，没有就插入」。同样是「先查后插」，同样有并发窗口——两个并发支付请求可能各自插入一条支付单，**一个订单出现两条支付记录**。
 
-修复方向：把 `idx_order_id` 改成 `UNIQUE KEY uk_order_id (order_id)`。这样第二条插入会直接失败、事务回滚，数据库层面兜住。
+**已在 commit `f629224` 修复**：`schema.sql` 里把 `idx_order_id` 改成 `UNIQUE KEY uk_order_id (order_id)`，第二条插入会直接失败、事务回滚，**由数据库层面兜住**（对现有库已执行对应的 `ALTER TABLE`，改前确认过无重复数据）。
 
-> 这和坑 1 是**同一类问题**（先读后写），但修复层次不同：坑 1 靠应用层乐观锁，这个靠数据库唯一约束。**能用数据库约束兜住的，优先用数据库约束**——它比应用代码更可靠。
+> 这和坑 1 是**同一类问题**（先读后写），但修复层次不同：坑 1 靠应用层乐观锁，这个靠数据库唯一约束。
+> **能用数据库约束兜住的，优先用数据库约束**——它比应用代码更可靠，因为不依赖每个调用方都记得写对判断。
 
 ---
 
@@ -386,7 +411,7 @@ for (Order order : orders) {
 
 ---
 
-**上一篇** → `03-auth-认证.md` ｜ **下一篇**（待写）→ `05-merchant`、`06-dish`、`07-cart` 等其余 9 个模块（简版）
+**上一篇** → `03-auth-认证.md` ｜ **下一篇** → `05-merchant-店铺.md`
 
 ---
 
