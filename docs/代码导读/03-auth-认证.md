@@ -14,11 +14,11 @@
 
 ### 和 `user` 模块的分工（很容易混）
 
-|        | `user` 模块                                  | `auth` 模块                            |
-| ------ | -------------------------------------------- | -------------------------------------- |
+| | `user` 模块 | `auth` 模块 |
+| --- | --- | --- |
 | 管什么 | **账号数据**：注册、资料、改密、管理员管账号 | **身份凭证**：登录、发令牌、刷新、登出 |
-| 回答   | 「这个账号存不存在？密码对不对？」           | 「怎么证明你是你？证明有效期多长？」   |
-| 类比   | 人事档案                                     | 门禁卡办理处                           |
+| 回答 | 「这个账号存不存在？密码对不对？」 | 「怎么证明你是你？证明有效期多长？」 |
+| 类比 | 人事档案 | 门禁卡办理处 |
 
 看到 `AuthServiceImpl` 里调 `userApi.findAuthByUsername()` 就明白这个分界了：**auth 不自己查账号表，它问 user 模块要。**
 
@@ -31,7 +31,7 @@
    stats  ───┼──> order ──> dish / merchant / address / cart ──> common
              │
    user  ────┴──> common
-
+             
    auth ─────────> user-api, common          ← auth 谁也不依赖它
 ```
 
@@ -77,33 +77,33 @@ auth  实现：  class LoginUserLoaderImpl implements LoginUserLoader { ... }
 
 `auth` 模块 9 个文件（按行数排序）：
 
-| 子包           | 文件                  | 行数 | 作用                                                 |
-| -------------- | --------------------- | ---- | ---------------------------------------------------- |
-| `service/impl` | `AuthServiceImpl`     | 211  | **核心**：登录 / 刷新 / 登出 / 当前用户信息          |
-| `controller`   | `AuthController`      | 72   | 4 个接口：`/login` `/refresh` `/logout` `/me`        |
-| `service`      | `AuthService`         | 25   | 上面 4 个方法的接口定义                              |
-| `service/impl` | `LoginUserLoaderImpl` | 38   | SPI 实现：按 userId 加载登录用户                     |
-| `vo`           | `UserInfoVO`          | 30   | `/auth/me` 的返回体                                  |
-| `dto`          | `LoginDTO`            | 29   | 登录入参（账号 / 密码 / **clientType 端标识**）      |
-| `vo`           | `TokenVO`             | 28   | 令牌返回体（accessToken / refreshToken / expiresIn） |
-| `dto`          | `LogoutDTO`           | 18   | 登出入参（可选带 refreshToken）                      |
-| `dto`          | `RefreshTokenDTO`     | 17   | 刷新入参                                             |
+| 子包 | 文件 | 行数 | 作用 |
+| --- | --- | --- | --- |
+| `service/impl` | `AuthServiceImpl` | 211 | **核心**：登录 / 刷新 / 登出 / 当前用户信息 |
+| `controller` | `AuthController` | 72 | 4 个接口：`/login` `/refresh` `/logout` `/me` |
+| `service` | `AuthService` | 25 | 上面 4 个方法的接口定义 |
+| `service/impl` | `LoginUserLoaderImpl` | 38 | SPI 实现：按 userId 加载登录用户 |
+| `vo` | `UserInfoVO` | 30 | `/auth/me` 的返回体 |
+| `dto` | `LoginDTO` | 29 | 登录入参（账号 / 密码 / **clientType 端标识**） |
+| `vo` | `TokenVO` | 28 | 令牌返回体（accessToken / refreshToken / expiresIn） |
+| `dto` | `LogoutDTO` | 18 | 登出入参（可选带 refreshToken） |
+| `dto` | `RefreshTokenDTO` | 17 | 刷新入参 |
 
 ### `AuthServiceImpl` 的 4 个公开方法
 
-| 方法                        | 做什么   | 关键动作                                                                 |
-| --------------------------- | -------- | ------------------------------------------------------------------------ |
-| `login(LoginDTO)`           | 登录     | 失败计数检查 → 校验密码 → 校验账号状态 → **校验端身份匹配** → 签发令牌对 |
-| `refresh(RefreshTokenDTO)`  | 刷新令牌 | 校验类型 → 校验缓存中的 jti → 回查账号状态 → **旋转**（删旧签新）        |
-| `logout(String, LogoutDTO)` | 登出     | access 的 jti **进黑名单**；refresh 的 jti **从缓存删除**                |
-| `userInfo()`                | 当前用户 | 从 `UserContextHolder` 读（不查库）                                      |
+| 方法 | 做什么 | 关键动作 |
+| --- | --- | --- |
+| `login(LoginDTO)` | 登录 | 失败计数检查 → 校验密码 → 校验账号状态 → **校验端身份匹配** → 签发令牌对 |
+| `refresh(RefreshTokenDTO)` | 刷新令牌 | 校验类型 → 校验缓存中的 jti → 回查账号状态 → **旋转**（删旧签新） |
+| `logout(String, LogoutDTO)` | 登出 | access 的 jti **进黑名单**；refresh 的 jti **从缓存删除** |
+| `userInfo()` | 当前用户 | 从 `UserContextHolder` 读（不查库） |
 
 ### 两个私有方法（值得看）
 
-| 方法                                      | 作用                                    | 为什么单独抽出来                                    |
-| ----------------------------------------- | --------------------------------------- | --------------------------------------------------- |
+| 方法 | 作用 | 为什么单独抽出来 |
+| --- | --- | --- |
 | `issueTokens(userId, username, userType)` | 签发令牌对 + 把 refresh 的 jti 写进缓存 | login 和 refresh 都要用，抽出来保证两处行为完全一致 |
-| `parseClientType(String)`                 | `clientType` 字符串 → 枚举              | 非法值必须**拒绝**，不能静默兜底（见第 ⑥ 段坑 3）   |
+| `parseClientType(String)` | `clientType` 字符串 → 枚举 | 非法值必须**拒绝**，不能静默兜底（见第 ⑥ 段坑 3） |
 
 ---
 
@@ -113,16 +113,16 @@ auth  实现：  class LoginUserLoaderImpl implements LoginUserLoader { ... }
 
 这是本篇最值得带走的东西。假设 access 有效期 30 分钟、refresh 7 天：
 
-| 时刻        | 发生了什么                                          | 缓存里的状态                                |
-| ----------- | --------------------------------------------------- | ------------------------------------------- |
-| T+0         | 用户登录 → 签发 access（30m）+ refresh（7d）        | `auth:refresh:{jti_A} = userId`             |
-| T+0 ~ T+30m | 用户正常操作，每次请求带 access                     | 不变                                        |
-| T+30m       | access 过期 → 前端自动调 `/auth/refresh`            | 删除 `jti_A`，写入 `jti_B`                  |
-| T+30m       | 拿到新的 access + 新的 refresh                      | `auth:refresh:{jti_B} = userId`             |
-| **T+31m**   | **如果攻击者拿着偷来的旧 refresh（`jti_A`）来刷新** | 缓存里**查不到** `jti_A` → 返回 `40102` ❌  |
-| T+2h        | 用户点登出                                          | access 的 jti 写入 **黑名单**；删除 `jti_B` |
-| T+2h 之后   | 攻击者拿这个 access 访问业务接口                    | 过滤器查到黑名单 → `401` ❌                 |
-| T+2.5h      | 黑名单那条记录**自动过期**（TTL = 令牌剩余有效期）  | 黑名单自动瘦身                              |
+| 时刻 | 发生了什么 | 缓存里的状态 |
+| --- | --- | --- |
+| T+0 | 用户登录 → 签发 access（30m）+ refresh（7d） | `auth:refresh:{jti_A} = userId` |
+| T+0 ~ T+30m | 用户正常操作，每次请求带 access | 不变 |
+| T+30m | access 过期 → 前端自动调 `/auth/refresh` | 删除 `jti_A`，写入 `jti_B` |
+| T+30m | 拿到新的 access + 新的 refresh | `auth:refresh:{jti_B} = userId` |
+| **T+31m** | **如果攻击者拿着偷来的旧 refresh（`jti_A`）来刷新** | 缓存里**查不到** `jti_A` → 返回 `40102` ❌ |
+| T+2h | 用户点登出 | access 的 jti 写入 **黑名单**；删除 `jti_B` |
+| T+2h 之后 | 攻击者拿这个 access 访问业务接口 | 过滤器查到黑名单 → `401` ❌ |
+| T+2.5h | 黑名单那条记录**自动过期**（TTL = 令牌剩余有效期） | 黑名单自动瘦身 |
 
 **这一张表解释了双 token 的全部设计意图**：
 
