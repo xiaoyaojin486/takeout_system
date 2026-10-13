@@ -1,0 +1,72 @@
+---
+# ===========================================================================
+#  zabbix-agent role：把目标机接入 Zabbix 监控
+#
+#  装 Zabbix Agent2 → 渲染主配置 → 投递自定义监控项 → 放行 10050 → 启动
+#
+#  监控项覆盖四类目标：
+#    Nginx 80/81、两个后端 18080/18081、MySQL 3306 / Redis 6379 / MinIO 9000、
+#    以及备份心跳文件（超过 24h 没更新说明备份静默失败）
+#
+#  ★ Agent 装在【宿主机】而不是容器里：监控项要读宿主机端口与
+#    {{ status_dir }}/last_success 文件，容器化的 Agent 看不到这些。
+# ===========================================================================
+
+- name: 校验 Zabbix Server 地址已配置
+  ansible.builtin.assert:
+    that: zabbix_server_ip | length > 0
+    fail_msg: "请先在 deploy/ansible/group_vars/all/main.yml 里设置 zabbix_server_ip"
+
+- name: 添加 Zabbix 官方仓库
+  ansible.builtin.dnf:
+    name: "{{ zabbix_repo_url }}"
+    state: present
+    disable_gpg_check: true
+
+- name: 安装 Zabbix Agent2
+  ansible.builtin.dnf:
+    name: "{{ zabbix_package }}"
+    state: present
+
+- name: 渲染 agent 主配置
+  ansible.builtin.template:
+    src: zabbix_agentd.conf.j2
+    dest: /etc/zabbix/zabbix_agentd.conf
+    mode: "0644"
+  notify: 重启 zabbix-agent2
+
+- name: 投递自定义监控项
+  ansible.builtin.template:
+    src: userparameter_takeout.conf.j2
+    dest: /etc/zabbix/zabbix_agentd.d/userparameter_takeout.conf
+    mode: "0644"
+  notify: 重启 zabbix-agent2
+
+- name: 10050 端口仅对 Zabbix Server 放行
+  # 若你的 Server 是通过 SSH 隧道反向接入（目标机无入方向端口），这条规则用不上，
+  # 但不影响运行 —— 它只是把直接的 10050 访问限制在 Server 一个 IP。
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family=ipv4 source address={{ zabbix_server_ip }}/32
+      port port=10050 protocol=tcp accept
+    permanent: true
+    immediate: true
+    state: enabled
+  when: configure_firewalld | bool
+
+- name: 启动并设开机自启 zabbix-agent2
+  ansible.builtin.systemd:
+    name: "{{ zabbix_package }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: 自检监控项能否取到值
+  ansible.builtin.shell: /usr/sbin/zabbix_agent2 -t "takeout.tcp[{{ h5_port }}]" 2>&1 | tail -1
+  register: agent_selftest
+  changed_when: false
+  failed_when: false
+
+- name: 监控项自检结果（应显示 [t|1]）
+  ansible.builtin.debug:
+    msg: "{{ agent_selftest.stdout_lines | default(['(无输出)']) }}"

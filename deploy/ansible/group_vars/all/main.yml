@@ -1,0 +1,100 @@
+---
+# ===========================================================================
+#  全局变量（非敏感）。密钥在 vault.yml，便于整文件加密。
+# ===========================================================================
+
+# ===== 路径 =====
+takeout_root: /opt/takeout
+backup_dir: "{{ takeout_root }}/backup"
+status_dir: "{{ takeout_root }}/status"
+
+# ===== 版本：全部 pin 死，杜绝 latest 漂移 =====
+# 改版本只需改这里（compose 里的镜像名通过 .env 的 APP_VERSION 注入）
+app_version: "1.0.0"
+backend_image: "takeout-server:{{ app_version }}"
+nginx_image: "takeout-nginx:{{ app_version }}"
+
+mysql_version: "8.0.36"
+redis_version: "7.2-alpine"
+# 官方 minio/minio 镜像已于 2026-09 从 Docker Hub 下架（社区版 EOL），改用社区维护分叉
+minio_version: "RELEASE.2026-06-18T00-00-00Z"
+rclone_version: "1.68.2"
+nginx_base_version: "1.27-alpine"
+jdk_version: "17-jre"
+
+# ===== 端口 =====
+h5_port: 80
+admin_port: 81
+minio_console_port: 9001
+
+# ===== 构建控制 =====
+# true ：每次跑 playbook 都重新构建并重传镜像（改了后端/前端代码时用）
+# false：目标机已有镜像 tar 就跳过传输，只做配置类变更（更快）
+rebuild_images: true
+# 镜像 tar 在控制节点的落点（.tmp/ 已被 .gitignore 排除）
+image_export_dir: "{{ project_root }}/.tmp/images"
+
+# ===== Docker 镜像加速器（按需增删）=====
+docker_registry_mirrors:
+  - "https://docker.1panel.live/"
+  - "https://docker.m.daocloud.io/"
+  - "https://docker.xuanyuan.me/"
+  - "https://docker.1ms.run/"
+
+# ===== 预拉基础镜像（应用镜像由 build role 现场构建，不在列表里）=====
+base_images:
+  - "mysql:{{ mysql_version }}"
+  - "redis:{{ redis_version }}"
+  - "pgsty/minio:{{ minio_version }}"
+  - "rclone/rclone:{{ rclone_version }}"
+  - "nginx:{{ nginx_base_version }}"
+  - "eclipse-temurin:{{ jdk_version }}"
+  - "maven:3.9-eclipse-temurin-17"
+  - "node:20-alpine"
+
+# ===== 主机 systemd 日志（journald）=====
+# 只管 journalctl 看的那些；容器日志由 docker role 的 daemon.json 管，两套互不相通
+journald_storage: persistent
+journald_max_use: "200M"
+journald_max_file_size: "50M"
+
+# ===== 数据库 =====
+mysql_db: takeout
+
+# ===== MinIO 桶 =====
+minio_app_bucket: takeout # 商品图 / 用户头像（应用启动时自建 + 设公共读）
+minio_backup_bucket: takeout-backup # 数据库备份（模拟云端 OSS 双备份）
+
+# ===== 备份 =====
+backup_keep_local_days: 7
+
+# ===== Docker 网络名（备份容器要加入它才能按服务名访问 minio）=====
+docker_network: takeout-net
+
+# ===== firewalld =====
+configure_firewalld: true
+
+# ===== MinIO 控制台绑定地址 =====
+# 0.0.0.0 = 任意网卡可访问（控制台本身有账号密码保护）；
+# 想严格限制，改成目标机内网 IP（如 192.168.1.104），只从局域网访问。
+# 注意：Docker 发布的端口会绕过 firewalld，所以这里用绑定地址而不是防火墙规则来控制。
+minio_console_bind: "0.0.0.0"
+
+# ===== Zabbix =====
+# 改成你 Zabbix Server（博客项目那台 WSL2）能被目标机访问的地址
+zabbix_server_ip: "192.168.1.50"
+zabbix_hostname: "{{ inventory_hostname }}"
+zabbix_package: zabbix-agent2
+# Zabbix 官方仓库包；目标机不是 Rocky 9 / el9 时按官网换对应 URL
+zabbix_repo_url: "https://repo.zabbix.com/zabbix/7.0/rocky/9/x86_64/zabbix-release-7.0-1.el9.noarch.rpm"
+
+# ===== 项目根目录（绝对路径；playbook 跑在哪台机都成立）=====
+# site.yml 在 deploy/ansible/ 下，往上两级即项目根
+project_root: "{{ playbook_dir }}/../.."
+
+# ===== 密钥：真身在 vault.yml =====
+mysql_root_password: "{{ vault_mysql_root_password }}"
+redis_password: "{{ vault_redis_password }}"
+minio_root_user: "{{ vault_minio_root_user }}"
+minio_root_password: "{{ vault_minio_root_password }}"
+jwt_secret: "{{ vault_jwt_secret }}"

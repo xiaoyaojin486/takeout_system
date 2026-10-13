@@ -1,0 +1,8 @@
+[Unit]
+Description=外卖系统 MySQL 每日备份（本地保留 + 上传 MinIO）
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart={{ backup_dir }}/backup-db.sh

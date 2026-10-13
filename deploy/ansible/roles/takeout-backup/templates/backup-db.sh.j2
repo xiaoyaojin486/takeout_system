@@ -1,0 +1,83 @@
+#!/bin/bash
+# ===========================================================================
+#  外卖系统 MySQL 每日备份（由 takeout-backup.timer 触发）
+#
+#    1. mysqldump 全量导出 → gzip
+#    2. 本地保留 {{ backup_keep_local_days }} 天（快速回滚）
+#    3. rclone 流式上传到 MinIO 的 {{ minio_backup_bucket }} 桶
+#       —— 模拟"本地 + 云端 OSS"双备份，MinIO 那侧就是云端副本
+#    4. 成功后写心跳文件，供 Zabbix 判断"最后一次成功备份时间"
+#
+#  本文件由 Ansible 渲染生成：改配置请改 deploy/ansible/group_vars 后重跑 playbook。
+# ===========================================================================
+set -euo pipefail
+
+ENV_FILE="{{ takeout_root }}/.env"
+BACKUP_DIR="{{ backup_dir }}"
+STATUS_DIR="{{ status_dir }}"
+DB="{{ mysql_db }}"
+OSS_BUCKET="{{ minio_backup_bucket }}"
+KEEP_DAYS={{ backup_keep_local_days }}
+RCLONE_IMAGE="rclone/rclone:{{ rclone_version }}"
+NET="{{ docker_network }}"
+
+# 从部署 .env 读取 MySQL 密码与 MinIO 凭据（0600，只有 root 能读）
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+
+date_tag=$(date +%Y%m%d_%H%M%S)
+file="${DB}_${date_tag}.sql.gz"
+mkdir -p "$BACKUP_DIR"
+
+# ---------------------------------------------------------------------------
+# 1. 全量备份
+#    --single-transaction：InnoDB 一致性快照，不锁表
+#    MYSQL_PWD 传密码：既不出现在命令行（ps 看不到），也免掉 [Warning] 噪声
+# ---------------------------------------------------------------------------
+docker exec -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" takeout-mysql \
+  mysqldump -uroot --single-transaction --routines --triggers "$DB" \
+  | gzip > "$BACKUP_DIR/$file"
+
+size=$(stat -c%s "$BACKUP_DIR/$file")
+if [ "$size" -lt 100 ]; then
+  echo "[$(date '+%F %T')] 备份文件异常（${size}B），中止" >&2
+  exit 1
+fi
+echo "[$(date '+%F %T')] 本地备份完成：$file（$((size / 1024))KB）"
+
+# ---------------------------------------------------------------------------
+# 2. 本地保留 KEEP_DAYS 天
+# ---------------------------------------------------------------------------
+find "$BACKUP_DIR" -maxdepth 1 -name "*.sql.gz" -mtime +"$KEEP_DAYS" -delete
+
+# ---------------------------------------------------------------------------
+# 3. 上传到 MinIO（云端副本）
+#    用环境变量配置 rclone，不挂配置文件 —— 绕开 SELinux 标签与宿主目录权限问题；
+#    加入 takeout-net 网络，直接按服务名 minio 访问，不经过宿主机端口。
+# ---------------------------------------------------------------------------
+rclone_run() {
+  docker run --rm -i --network "$NET" \
+    -e RCLONE_CONFIG_MINIO_TYPE=s3 \
+    -e RCLONE_CONFIG_MINIO_PROVIDER=Minio \
+    -e RCLONE_CONFIG_MINIO_ACCESS_KEY_ID="$MINIO_ROOT_USER" \
+    -e RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" \
+    -e RCLONE_CONFIG_MINIO_ENDPOINT="http://minio:9000" \
+    "$RCLONE_IMAGE" "$@"
+}
+
+# 桶不存在时先建（幂等）
+rclone_run mkdir "minio:${OSS_BUCKET}" >/dev/null 2>&1 || true
+
+if gzip -dc "$BACKUP_DIR/$file" | rclone_run rcat "minio:${OSS_BUCKET}/${file}" 2>/dev/null; then
+  echo "[$(date '+%F %T')] 已上传 MinIO：${OSS_BUCKET}/${file}"
+else
+  # 上传失败【不删本地备份】：本地那份仍是可回滚的，只告警不中断
+  echo "[$(date '+%F %T')] 警告：MinIO 上传失败，本地备份保留：$file" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 4. 心跳文件：mtime 供 Zabbix 的 vfs.file.time 监控
+# ---------------------------------------------------------------------------
+date '+%F %T' > "$STATUS_DIR/last_success"
+
+echo "[$(date '+%F %T')] 备份任务结束"

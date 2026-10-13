@@ -1,0 +1,9 @@
+# 后端构建上下文（backend/）的排除清单。
+# 注意：项目根目录的 .dockerignore 对 `docker build backend/` 不生效，
+# 上下文根是 backend/，所以这里必须单独放一份。
+
+# 本地构建产物：不参与构建，也不该被塞进构建上下文
+target/
+
+# 敏感配置
+.env

@@ -1,0 +1,12 @@
+# 由 Ansible 渲染；改配置请改 group_vars 后重跑 playbook。
+
+# 被动模式：允许 Server 主动来拉数据（同局域网时最简单）
+Server={{ zabbix_server_ip }}
+
+# 主动模式：Agent 主动把数据推给 Server（目标机在 NAT 后方时用这个）
+ServerActive={{ zabbix_server_ip }}
+
+# 必须与 Zabbix Web 里创建主机时填的"主机名称"完全一致
+Hostname={{ zabbix_hostname }}
+
+Include=/etc/zabbix/zabbix_agentd.d/*.conf

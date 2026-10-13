@@ -1,0 +1,6 @@
+---
+# 需要的 Ansible 集合。首次使用前安装：
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix # firewalld 模块
+  - name: community.general # timezone 模块

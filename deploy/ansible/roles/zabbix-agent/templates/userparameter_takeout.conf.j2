@@ -1,0 +1,30 @@
+# ===========================================================================
+#  外卖系统自定义监控项（由 Ansible 渲染）
+#
+#  在 Zabbix Web → 配置 → 主机 → 监控项 里按下面的 key 建监控项：
+#    takeout.tcp[<端口>]           TCP 端口探活：1=在监听，0=没监听
+#    takeout.http[<IP>,<端口>]     HTTP 状态码：000=连不上
+#
+#  两者互补：
+#    TCP 探活  抓"服务没了"（进程/容器挂了）
+#    HTTP 状态码 抓"服务在却不可用"（端口在监听但接口报错）
+#
+#  建议给本机配的监控项：
+#    Nginx 网关 : takeout.tcp[{{ h5_port }}] / takeout.tcp[{{ admin_port }}]
+#                 takeout.http[127.0.0.1,{{ h5_port }}] / takeout.http[127.0.0.1,{{ admin_port }}]
+#    后端实例 1 : takeout.tcp[18080] / takeout.http[127.0.0.1,18080]
+#    后端实例 2 : takeout.tcp[18081] / takeout.http[127.0.0.1,18081]
+#    MySQL      : takeout.tcp[3306]
+#    Redis      : takeout.tcp[6379]
+#    MinIO      : takeout.tcp[9000] / takeout.tcp[{{ minio_console_port }}]
+#
+#  备份心跳（另建一条，key 用 Zabbix 内置的 vfs.file.time）：
+#    vfs.file.time[{{ status_dir }}/last_success,modify]
+#    触发器：now() - last(...) > 86400  →  超过 24 小时没成功备份
+# ===========================================================================
+
+# ---- TCP 端口探活（ss 收监听端口列表，命中则输出 1）----
+UserParameter=takeout.tcp[*],/usr/sbin/ss -tlnH | grep -q ":$1 " && echo 1 || echo 0
+
+# ---- HTTP 状态码（连不上时 curl 非零退出，回落到 000）----
+UserParameter=takeout.http[*],/usr/bin/curl -s -o /dev/null -w "%{http_code}" "http://$1:$2/" || echo 000

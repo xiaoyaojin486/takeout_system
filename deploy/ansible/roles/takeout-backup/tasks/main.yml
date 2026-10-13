@@ -1,0 +1,60 @@
+---
+# ===========================================================================
+#  takeout-backup role：MySQL 每日备份（本地保留 + 上传 MinIO 模拟云端 OSS）
+#
+#  本 role 只管【主机侧的一次性配置】：
+#    备份目录、status 目录、备份脚本、systemd 定时器、心跳文件
+#  备份脚本的逻辑（保留天数、桶名、rclone 镜像版本）由模板从 group_vars 渲染。
+# ===========================================================================
+
+- name: 创建备份目录
+  ansible.builtin.file:
+    path: "{{ backup_dir }}"
+    state: directory
+    # 0700：这里放 .sql.gz 备份与可能的凭据，除 root 外不该被看到
+    mode: "0700"
+
+- name: 创建监控状态目录
+  ansible.builtin.file:
+    path: "{{ status_dir }}"
+    state: directory
+    # 0755：这里只有一个时间戳文件，是【故意公开】给 Zabbix Agent（非 root）读的。
+    # 不能和 backup_dir 混用：0700 的目录连穿都穿不进去，Agent 会报 Permission denied，
+    # 表现是监控项变 unsupported —— 监控【安静地】失效，最难发现。
+    mode: "0755"
+
+- name: 下发备份脚本
+  ansible.builtin.template:
+    src: backup-db.sh.j2
+    dest: "{{ backup_dir }}/backup-db.sh"
+    mode: "0700"
+
+- name: 投递 systemd 单元
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - takeout-backup.service
+    - takeout-backup.timer
+  notify: 重新加载 systemd
+
+- name: 预建心跳文件
+  # ★ 给 Zabbix 的 vfs.file.time 用：它的 mtime 就是"最后一次成功备份的时间"。
+  #   必须提前建出来 —— 文件不存在时监控项会变 unsupported，触发器拿不到值，等于没监控。
+  #   modification_time: preserve 是关键：重复跑 playbook 不会把它摸新，
+  #   否则每次跑 Ansible 都像在假装"刚刚备份成功"。
+  ansible.builtin.file:
+    path: "{{ status_dir }}/last_success"
+    state: touch
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
+
+- name: 启用每日备份定时器
+  ansible.builtin.systemd:
+    name: takeout-backup.timer
+    enabled: true
+    state: started
+    # 单元文件是上面刚投递的，这里立刻重载一次，不必等 handler 收尾
+    daemon_reload: true

@@ -1,0 +1,36 @@
+---
+# ===========================================================================
+#  firewall role：放行对外端口
+#
+#  ★ 注意一个容易踩的点：Docker 发布端口（compose 里的 ports:）会在
+#    iptables 的 DOCKER 链里插规则，优先级高于 firewalld，
+#    所以 firewalld 其实【拦不住】已经被 Docker 发布的端口。
+#    这里放行 80/81 是为了表达意图、并在未启用 Docker iptables 集成时兜底；
+#    MinIO 控制台（9001）真正的访问控制靠 compose 里的绑定地址
+#    （MINIO_CONSOLE_BIND）与 MinIO 自身的账号密码。
+# ===========================================================================
+
+- name: 安装并启动 firewalld
+  block:
+    - name: 安装 firewalld
+      ansible.builtin.dnf:
+        name: firewalld
+        state: present
+
+    - name: 启动并设开机自启 firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        state: started
+        enabled: true
+  when: configure_firewalld | bool
+
+- name: 放行对外端口（顾客端 80 / 管理端 81）
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop:
+    - "{{ h5_port }}"
+    - "{{ admin_port }}"
+  when: configure_firewalld | bool

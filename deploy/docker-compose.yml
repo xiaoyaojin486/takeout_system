@@ -1,0 +1,182 @@
+# =====================================================================
+#  外卖系统 · 单机 Docker Compose（Nginx 负载均衡 + MinIO 对象存储）
+#
+#  拓扑（同一 bridge 网络，仅 80/81 对外）：
+#      Nginx(80/81) --轮询--> backend-1(8080) / backend-2(8080)
+#          |  /files/ 反代          |                |
+#          v                        +-------+--------+
+#      MinIO(9000/9001)                 MySQL(3306) Redis(6379)
+#
+#  用法：docker compose --env-file .env up -d
+#  前置：takeout-server:<版本>、takeout-nginx:<版本> 两个镜像需已构建并 load 到本机
+#        （由 deploy/ansible 的 build role 自动完成）
+#
+#  数据用 named volume 而非 bind mount：避免 SELinux 标签与宿主目录权限问题；
+#  备份走 mysqldump 导出，不依赖宿主路径。注意 `docker compose down -v` 会清空数据。
+# =====================================================================
+
+name: takeout
+
+# 两个后端共用一份环境变量：多实例下缓存与文件必须外置共享
+x-backend-env: &backend-env
+  TZ: Asia/Shanghai
+  # 缓存走 Redis：JWT 黑名单 / refresh token / 限流在实例间共享，否则 A 登出 B 还认
+  CACHE_TYPE: redis
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  # 数据库
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DB: ${MYSQL_DB:-takeout}
+  MYSQL_USERNAME: root
+  MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+  # 建表脚本幂等（CREATE TABLE IF NOT EXISTS + ON DUPLICATE KEY UPDATE），两实例同跑也安全
+  SQL_INIT_MODE: always
+  # JWT 双 token
+  JWT_SECRET: ${JWT_SECRET}
+  ACCESS_TOKEN_TTL: 30m
+  REFRESH_TOKEN_TTL: 7d
+  # 文件走 MinIO：A 实例上传的图片/头像 B 实例要能读到
+  FILE_STORAGE_TYPE: minio
+  MINIO_ENDPOINT: http://minio:9000
+  MINIO_BUCKET: takeout
+  MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+  MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  MINIO_PUBLIC_PREFIX: /files
+
+services:
+  # ------------------------- 数据层 -------------------------
+  mysql:
+    image: mysql:8.0.36
+    container_name: takeout-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DB:-takeout}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    # 只绑 127.0.0.1：给宿主机调试与 Zabbix 探活用，不对局域网暴露
+    ports:
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-p${MYSQL_ROOT_PASSWORD}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [takeout-net]
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: takeout-redis
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    # 密码 + 内存上限 + LRU 淘汰：与博客项目同款调优
+    command: redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [takeout-net]
+
+  # ------------------------- 对象存储 -------------------------
+  # 官方 minio/minio 镜像已于 2026-09 从 Docker Hub 下架（社区版 EOL），
+  # 这里用社区维护的 drop-in 分叉 pgsty/minio：同环境变量、同 server 命令、同 /data 格式
+  minio:
+    image: pgsty/minio:RELEASE.2026-06-18T00-00-00Z
+    container_name: takeout-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - minio-data:/data
+    ports:
+      # 9000 绑 127.0.0.1：Nginx 在容器网络内直连 minio:9000，本无需发布；
+      # 这里发布是为了 Zabbix TCP 探活。
+      - "127.0.0.1:9000:9000"
+      # 9001 控制台：绑定地址由 .env 的 MINIO_CONSOLE_BIND 控制
+      # （Docker 发布端口会绕过 firewalld，所以只能靠绑定地址限制来源）
+      - "${MINIO_CONSOLE_BIND:-0.0.0.0}:9001:9001"
+    networks: [takeout-net]
+
+  # ------------------------- 应用层：双后端 -------------------------
+  backend-1:
+    image: takeout-server:${APP_VERSION:-1.0.0}
+    container_name: takeout-backend-1
+    restart: unless-stopped
+    environment: *backend-env
+    ports:
+      # 发布到宿主机独立端口：Zabbix 可分别探活两个实例，便于演示"一个挂另一个接管"
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks: [takeout-net]
+
+  backend-2:
+    image: takeout-server:${APP_VERSION:-1.0.0}
+    container_name: takeout-backend-2
+    restart: unless-stopped
+    environment: *backend-env
+    ports:
+      - "127.0.0.1:18081:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks: [takeout-net]
+
+  # ------------------------- 网关层 -------------------------
+  nginx:
+    image: takeout-nginx:${APP_VERSION:-1.0.0}
+    container_name: takeout-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80" # 顾客端 H5
+      - "81:81" # 商家 / 管理端 Admin
+    depends_on:
+      - backend-1
+      - backend-2
+    networks: [takeout-net]
+
+networks:
+  # 固定网络名：备份脚本里的 rclone 容器要 --network takeout-net 加入进来访问 minio
+  takeout-net:
+    name: takeout-net
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:

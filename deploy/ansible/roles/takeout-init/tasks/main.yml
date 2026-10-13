@@ -1,0 +1,88 @@
+---
+# ===========================================================================
+#  takeout-init role：把应用栈在目标机上跑起来
+#    建目录 → 传 compose → 渲染 .env（密钥来自 Vault）→ 传镜像 tar 并 load
+#    → docker compose up -d → 等待网关就绪
+# ===========================================================================
+
+- name: 创建部署目录
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ takeout_root }}"
+    - "{{ takeout_root }}/images"
+
+- name: 下发 docker-compose.yml
+  ansible.builtin.copy:
+    src: "{{ project_root }}/deploy/docker-compose.yml"
+    dest: "{{ takeout_root }}/docker-compose.yml"
+    mode: "0644"
+
+- name: 渲染 .env（密钥来自 Vault）
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ takeout_root }}/.env"
+    # 0600：里面是各服务的密码
+    mode: "0600"
+
+- name: 检查目标机是否已有镜像 tar
+  ansible.builtin.stat:
+    path: "{{ takeout_root }}/images/{{ item }}.tar"
+  loop:
+    - takeout-server
+    - takeout-nginx
+  register: image_tars
+
+- name: 传输镜像 tar（缺失或 rebuild_images=true 时）
+  ansible.builtin.copy:
+    src: "{{ image_export_dir }}/{{ item.item }}.tar"
+    dest: "{{ takeout_root }}/images/{{ item.item }}.tar"
+    mode: "0644"
+  loop: "{{ image_tars.results }}"
+  loop_control:
+    label: "{{ item.item }}.tar"
+  when: (not item.stat.exists) or (rebuild_images | bool)
+
+- name: 加载镜像到 Docker
+  ansible.builtin.shell: docker load -i {{ takeout_root }}/images/{{ item }}.tar
+  loop:
+    - takeout-server
+    - takeout-nginx
+  register: docker_load
+  changed_when: "'Loaded image' in docker_load.stdout"
+
+- name: 启动全栈（docker compose up -d）
+  ansible.builtin.shell: docker compose --env-file .env up -d --remove-orphans
+  args:
+    chdir: "{{ takeout_root }}"
+  register: compose_up
+
+- name: 等待网关就绪（最多 90s）
+  ansible.builtin.shell: curl -sf http://127.0.0.1:{{ h5_port }}/nginx-health
+  register: gateway_ready
+  retries: 30
+  delay: 3
+  until: gateway_ready.rc == 0
+  changed_when: false
+  failed_when: false
+
+- name: 确认网关已就绪
+  ansible.builtin.assert:
+    that: gateway_ready.rc == 0
+    fail_msg: >-
+      网关 90 秒内未就绪。排查：
+      cd {{ takeout_root }} && docker compose logs --tail=50
+    success_msg: "网关已就绪（http://{{ ansible_host }}:{{ h5_port }}/）"
+
+- name: 查看各容器状态
+  ansible.builtin.shell: docker compose --env-file .env ps
+  args:
+    chdir: "{{ takeout_root }}"
+  register: compose_ps
+  changed_when: false
+
+- name: 容器状态
+  ansible.builtin.debug:
+    msg: "{{ compose_ps.stdout_lines }}"

@@ -1,0 +1,61 @@
+---
+# ===========================================================================
+#  build role（在【控制节点】执行，site.yml 里 hosts: localhost）
+#
+#  把后端与网关两个镜像构建好并导出成 tar，供目标机 docker load。
+#
+#  为什么在控制节点构建而不是目标机：
+#    目标机不用装 Maven / Node，也不用现场拉几百 MB 依赖；
+#    镜像只以 tar 形式传一次，部署更快、更可控。
+#  前提：控制节点（跑 Ansible 的这台，通常是 WSL2）已安装并启动 Docker。
+# ===========================================================================
+
+- name: 检查控制节点 Docker 是否可用
+  ansible.builtin.shell: docker version >/dev/null 2>&1 && echo ok || echo missing
+  register: docker_check
+  changed_when: false
+
+- name: 控制节点无 Docker 时立刻中止
+  ansible.builtin.assert:
+    that: docker_check.stdout == 'ok'
+    fail_msg: >-
+      控制节点（当前机器）没有可用的 Docker，无法构建镜像。
+      请先在控制节点安装并启动 Docker，再重跑 playbook。
+    success_msg: "控制节点 Docker 可用"
+
+- name: 创建镜像导出目录
+  ansible.builtin.file:
+    path: "{{ image_export_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: 构建后端镜像 {{ backend_image }}
+  ansible.builtin.command:
+    cmd: docker build -t {{ backend_image }} backend/
+    chdir: "{{ project_root }}"
+  changed_when: false
+
+- name: 构建网关镜像 {{ nginx_image }}
+  ansible.builtin.command:
+    cmd: docker build -t {{ nginx_image }} -f deploy/nginx/Dockerfile .
+    chdir: "{{ project_root }}"
+  changed_when: false
+
+- name: 导出后端镜像为 tar
+  ansible.builtin.command:
+    cmd: docker save -o {{ image_export_dir }}/takeout-server.tar {{ backend_image }}
+  changed_when: false
+
+- name: 导出网关镜像为 tar
+  ansible.builtin.command:
+    cmd: docker save -o {{ image_export_dir }}/takeout-nginx.tar {{ nginx_image }}
+  changed_when: false
+
+- name: 汇总镜像 tar 体积
+  ansible.builtin.shell: ls -lh {{ image_export_dir }}/*.tar | awk '{print $9" -> "$5}'
+  register: image_size
+  changed_when: false
+
+- name: 构建结果
+  ansible.builtin.debug:
+    msg: "{{ image_size.stdout_lines }}"

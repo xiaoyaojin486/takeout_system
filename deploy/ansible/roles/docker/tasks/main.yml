@@ -1,0 +1,73 @@
+---
+# ===========================================================================
+#  docker role：装 Docker、配镜像加速与容器日志轮转、预拉基础镜像
+#
+#  ★ 容器日志轮转（daemon.json 的 json-file 驱动）与主机日志（journald role）
+#    是【两套互不相通的东西】，别改错地方：
+#      容器日志 -> docker logs 看的，归这里管
+#      主机日志 -> journalctl 看的，归 journald role 管
+# ===========================================================================
+
+- name: 安装基础工具（curl / tar / gzip）
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - tar
+      - gzip
+    state: present
+
+- name: 添加 Docker CE 官方仓库
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/centos/docker-ce.repo
+    dest: /etc/yum.repos.d/docker-ce.repo
+    mode: "0644"
+
+- name: 安装 Docker 引擎与 compose 插件
+  ansible.builtin.dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+
+- name: 创建 /etc/docker 目录
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    mode: "0755"
+
+- name: 备份最初的 daemon.json（仅首次执行时备份）
+  ansible.builtin.copy:
+    src: /etc/docker/daemon.json
+    dest: /etc/docker/daemon.json.orig
+    remote_src: true
+    force: false
+  failed_when: false
+
+- name: 配置镜像加速与容器日志轮转
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+  notify: 重启 docker
+
+# 镜像加速器要 Docker 重启后才生效，而下面就要拉镜像 ——
+# 所以在这里先把 handler 刷掉，不能等到 play 结束。
+- name: 让 Docker 配置立即生效
+  ansible.builtin.meta: flush_handlers
+
+- name: 启动并设开机自启 docker
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: 预拉基础镜像（首次较慢，之后命中本地缓存）
+  ansible.builtin.command: "docker pull {{ item }}"
+  loop: "{{ base_images }}"
+  register: pull_result
+  changed_when: "'Status: Downloaded newer image' in pull_result.stdout"
+  retries: 3
+  delay: 5
+  until: pull_result is succeeded

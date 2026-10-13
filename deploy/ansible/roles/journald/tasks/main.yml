@@ -1,0 +1,38 @@
+---
+# ===========================================================================
+#  journald role：给【主机】systemd 日志设容量上限并让它落盘
+#
+#  ★ 只管 journalctl 看的那些日志。容器日志由 docker role 的 daemon.json 管，
+#    两套存储互不相通，改日志配置前先想清楚要改哪一套。
+#
+#  ★ 为什么用 ini_file 而不是 template：
+#    /etc/systemd/journald.conf 是发行版装出来的文件，里面几十行注释就是
+#    各选项的默认值说明。整份覆盖等于把说明书删了；ini_file 只动我们要的
+#    那三行，其余一个字节不碰。
+# ===========================================================================
+
+- name: 备份当前的 journald.conf（仅首次执行时备份）
+  ansible.builtin.copy:
+    src: /etc/systemd/journald.conf
+    dest: /etc/systemd/journald.conf.orig
+    remote_src: true
+    force: false
+  failed_when: false
+
+- name: 设置 journald 的容量上限与持久化
+  ansible.builtin.ini_file:
+    path: /etc/systemd/journald.conf
+    section: Journal
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { option: Storage,           value: "{{ journald_storage }}" }
+    - { option: SystemMaxUse,      value: "{{ journald_max_use }}" }
+    - { option: SystemMaxFileSize, value: "{{ journald_max_file_size }}" }
+  notify: 重启 journald
+  # ini_file 不会解开原有的 #SystemMaxUse= 注释，而是在 [Journal] 段尾新增一行；
+  # 同一选项出现两次（旧的注释说明 + 新增的生效值），systemd 读后者，这是预期结果。
+  #
+  # Storage=persistent 是关键：默认值 auto 只在 /var/log/journal 已存在时才落盘，
+  # 否则写进 /run（内存），重启全丢。写死不写 auto，不依赖"目录恰好在不在"。

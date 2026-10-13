@@ -1,0 +1,74 @@
+---
+# ===========================================================================
+#  外卖系统 · 单机部署编排
+#
+#  用法（在 deploy/ansible 目录下）：
+#     cp inventory.ini.example inventory.ini    # 填目标机 IP
+#     ansible-galaxy collection install -r requirements.yml
+#     ansible-playbook site.yml                 # 若 vault.yml 已加密，加 --ask-vault-pass
+#
+#  三个阶段：
+#    1) 前置检查（目标机）
+#    2) 构建镜像（控制节点 WSL2，产出镜像 tar）
+#    3) 部署（目标机：Docker → 日志 → 防火墙 → 起服务 → 备份 → 监控）
+# ===========================================================================
+
+# ========== 第一步：前置检查（失败就立刻停，给清楚报错）==========
+- name: 部署前置检查
+  hosts: takeout
+  gather_facts: true
+  tasks:
+    - name: 打印目标机基本信息
+      ansible.builtin.debug:
+        msg: >-
+          目标机 {{ inventory_hostname }}：
+          {{ ansible_distribution }} {{ ansible_distribution_version }}
+          （{{ ansible_architecture }}，内存 {{ (ansible_memtotal_mb / 1024) | round(1) }} GB）
+
+    # 只认 RHEL 系（Rocky / CentOS / AlmaLinux）：docker 与 zabbix 的仓库地址都是为它写的
+    - name: 校验目标机为 RHEL 系发行版
+      ansible.builtin.assert:
+        that: ansible_os_family == 'RedHat'
+        fail_msg: >-
+          本 playbook 目前只适配 RHEL 系发行版（Rocky / CentOS / AlmaLinux），
+          检测到的是 {{ ansible_distribution }}。请换用 RHEL 系目标机，或自行改造
+          roles/docker 与 roles/zabbix-agent 里的仓库地址。
+
+    # 第二次跑 playbook 时，80/81 被自己的 docker-proxy 占着是正常的；
+    # 被别的进程占着才是问题 —— 这条断言自己分辨这两种情况。
+    - name: 查看 80 / 81 端口占用者
+      ansible.builtin.shell: ss -tlnHp 2>/dev/null | grep -E ':80 |:81 ' || true
+      register: port_owner
+      changed_when: false
+      failed_when: false
+
+    - name: 端口检查
+      ansible.builtin.assert:
+        that:
+          - port_owner.stdout == ''
+            or 'docker-proxy' in port_owner.stdout
+            or 'nginx' in port_owner.stdout
+        fail_msg: >-
+          80 / 81 端口被以下进程占用，请先释放再部署：
+          {{ port_owner.stdout }}
+        success_msg: >-
+          80 / 81 端口可用（占用者：{{ port_owner.stdout | default('无', true) | trim }}）
+
+# ========== 第二步：在控制节点构建镜像 ==========
+- name: 在控制节点构建镜像
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - build
+
+# ========== 第三步：部署到目标机 ==========
+- name: 部署到目标机
+  hosts: takeout
+  roles:
+    - docker          # 装 Docker、配镜像加速与容器日志轮转、预拉基础镜像
+    - journald        # 主机 systemd 日志容量上限 + 落盘持久
+    - firewall        # 放行 80 / 81，9001 限局域网
+    - takeout-init    # 建目录、传 compose、渲染 .env、load 镜像、compose up
+    - takeout-backup  # 装 rclone 备份链路、systemd 定时器、心跳文件
+    - zabbix-agent    # 装 Zabbix Agent2、自定义监控项、10050 仅对 Server 放行

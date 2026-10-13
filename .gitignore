@@ -36,3 +36,7 @@ Thumbs.db
 
 # ---------- 临时目录 ----------
 .tmp/
+
+# ---------- Ansible ----------
+# 真实 inventory 含服务器 IP / 私钥路径，只提交 inventory.ini.example 模板
+deploy/ansible/inventory.ini

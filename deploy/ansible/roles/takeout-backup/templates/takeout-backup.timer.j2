@@ -1,0 +1,10 @@
+[Unit]
+Description=每天凌晨 3 点备份外卖系统数据库
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Persistent=true：机器在 3 点时没开机，开机后补跑一次，不会漏掉整天
+Persistent=true
+
+[Install]
+WantedBy=timers.target

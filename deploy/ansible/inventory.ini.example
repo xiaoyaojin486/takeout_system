@@ -1,0 +1,22 @@
+# ===========================================================================
+# Ansible 主机清单 —— 模板
+#
+# ★ 这个文件是【模板】。真正要用的那份叫 inventory.ini（同目录），
+#   它已被 .gitignore 排除，因为它含服务器真实地址。
+#
+# 【为什么真身不进仓库】
+#   仓库是公开的。这一行里同时有 公网 IP + ansible_user=root + 端口 + 私钥路径，
+#   等于告诉别人"用 root 这个用户名，来撞这台机器的 22 端口"。
+#
+# 【怎么用】
+#   cp inventory.ini.example inventory.ini
+#   然后把 <目标机IP> 换成真实地址、私钥路径改成你自己的
+# ===========================================================================
+
+[takeout]
+takeout-vm ansible_host=<目标机IP> ansible_user=root ansible_port=22 ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+[takeout:vars]
+# 一般不用写，Ansible 会自动探测（ansible.cfg 里 interpreter_python=auto_silent）。
+# 若目标机有多个 Python 导致探测失败，再取消下面这行的注释并改成实际路径：
+# ansible_python_interpreter=/usr/bin/python3
