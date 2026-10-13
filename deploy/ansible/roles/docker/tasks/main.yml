@@ -8,13 +8,7 @@
 #      主机日志 -> journalctl 看的，归 journald role 管
 # ===========================================================================
 
-- name: 安装基础工具（curl / tar / gzip）
-  ansible.builtin.dnf:
-    name:
-      - curl
-      - tar
-      - gzip
-    state: present
+# 基础工具（curl / tar / gzip）已上移到 base role 统一安装，这里不再重复。
 
 - name: 添加 Docker CE 官方仓库
   ansible.builtin.get_url:

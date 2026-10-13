@@ -40,21 +40,21 @@ ansible-playbook site.yml --ask-vault-pass
 
 ## 执行过程
 
-| 阶段 | 在哪台机 | 做什么 |
-|------|---------|--------|
-| 前置检查 | 目标机 | 校验发行版、检查 80/81 端口是否被占 |
-| 构建镜像 | 控制节点 | `docker build` 后端与网关 → `docker save` 成 tar |
-| 部署 | 目标机 | 装 Docker → 日志 → 防火墙 → 起服务 → 备份 → 监控 |
+| 阶段     | 在哪台机 | 做什么                                                                     |
+| -------- | -------- | -------------------------------------------------------------------------- |
+| 前置检查 | 目标机   | 校验发行版、检查 80/81 端口是否被占                                        |
+| 构建镜像 | 控制节点 | `docker build` 后端与网关 → `docker save` 成 tar                           |
+| 部署     | 目标机   | 补基础环境（chrony/NTP）→ 装 Docker → 日志 → 防火墙 → 起服务 → 备份 → 监控 |
 
 ## 常用变量（`group_vars/all/main.yml`）
 
-| 变量 | 说明 |
-|------|------|
-| `app_version` | 应用镜像版本（compose 与构建共用这个值） |
-| `rebuild_images` | `true` 每次重新构建并重传镜像；`false` 只做配置类变更 |
-| `zabbix_server_ip` | Zabbix Server 地址（不装监控就先留占位，装的时候会校验非空） |
-| `minio_console_bind` | MinIO 控制台绑定地址，默认 `0.0.0.0`；想只让局域网访问就填目标机内网 IP |
-| `configure_firewalld` | 是否配置 firewalld（RHEL 系默认 true） |
+| 变量                  | 说明                                                                    |
+| --------------------- | ----------------------------------------------------------------------- |
+| `app_version`         | 应用镜像版本（compose 与构建共用这个值）                                |
+| `rebuild_images`      | `true` 每次重新构建并重传镜像；`false` 只做配置类变更                   |
+| `zabbix_server_ip`    | Zabbix Server 地址（不装监控就先留占位，装的时候会校验非空）            |
+| `minio_console_bind`  | MinIO 控制台绑定地址，默认 `0.0.0.0`；想只让局域网访问就填目标机内网 IP |
+| `configure_firewalld` | 是否配置 firewalld（RHEL 系默认 true）                                  |
 
 ## 更新代码后重新发布
 

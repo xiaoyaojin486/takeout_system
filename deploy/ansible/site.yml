@@ -10,7 +10,7 @@
 #  三个阶段：
 #    1) 前置检查（目标机）
 #    2) 构建镜像（控制节点 WSL2，产出镜像 tar）
-#    3) 部署（目标机：Docker → 日志 → 防火墙 → 起服务 → 备份 → 监控）
+#    3) 部署（目标机：基础环境 → Docker → 日志 → 防火墙 → 起服务 → 备份 → 监控）
 # ===========================================================================
 
 # ========== 第一步：前置检查（失败就立刻停，给清楚报错）==========
@@ -66,9 +66,10 @@
 - name: 部署到目标机
   hosts: takeout
   roles:
-    - docker          # 装 Docker、配镜像加速与容器日志轮转、预拉基础镜像
-    - journald        # 主机 systemd 日志容量上限 + 落盘持久
-    - firewall        # 放行 80 / 81，9001 限局域网
-    - takeout-init    # 建目录、传 compose、渲染 .env、load 镜像、compose up
-    - takeout-backup  # 装 rclone 备份链路、systemd 定时器、心跳文件
-    - zabbix-agent    # 装 Zabbix Agent2、自定义监控项、10050 仅对 Server 放行
+    - base # 补全 minimal 缺失的基础环境（chrony/排障工具/EPEL/运维监控）
+    - docker # 装 Docker、配镜像加速与容器日志轮转、预拉基础镜像
+    - journald # 主机 systemd 日志容量上限 + 落盘持久
+    - firewall # 放行 80 / 81，9001 限局域网
+    - takeout-init # 建目录、传 compose、渲染 .env、load 镜像、compose up
+    - takeout-backup # 装 rclone 备份链路、systemd 定时器、心跳文件
+    - zabbix-agent # 装 Zabbix Agent2、自定义监控项、10050 仅对 Server 放行

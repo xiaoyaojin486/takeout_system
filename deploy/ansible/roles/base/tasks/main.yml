@@ -1,0 +1,108 @@
+---
+# ===========================================================================
+#  base role：给 Rocky Linux minimal 精简版补全基础环境
+#
+#  minimal 装的机器什么都缺。这里按四个层次补：
+#    A. 部署链路硬依赖：chrony / openssl / curl...
+#       —— 其中 chrony 是重中之重：JWT access token TTL=30min、
+#          备份 systemd timer、Zabbix 触发器时间窗，全靠系统时间准确。
+#          时间一漂，表现是 JWT 莫名 401、备份漏跑、告警错位，
+#          排查成本极高，所以放在最前面执行。
+#    B. 排障工具：dig / nc / netstat / vim...
+#       —— 出事时不用对着 SSH 干瞪眼。
+#    C. 源扩展：epel / dnf-plugins-core
+#       —— 社区包（htop / iftop）靠 EPEL 才有。
+#    D. 运维监控常用：htop / iotop / iftop / tcpdump / sysstat / strace
+#
+#  ★ 放在 site.yml 的 roles 列表最前：后面所有 role 都默认基础环境已就绪。
+# ===========================================================================
+
+- name: 安装 EPEL 仓库（htop / iftop 等社区包靠它）
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: 安装 dnf-plugins-core（启用 dnf config-manager，备而不用）
+  ansible.builtin.dnf:
+    name: dnf-plugins-core
+    state: present
+
+- name: 安装基础与排障工具（A + B + D 三档合并）
+  ansible.builtin.dnf:
+    name:
+      # —— A. 部署链路硬依赖 ——
+      - chrony # NTP 时间同步：JWT / 备份 timer / Zabbix 时间窗都依赖
+      - python3 # Ansible dnf 模块底层依赖（minimal 通常已带，保险）
+      - openssl # vault 加解密、生成随机 token
+      - curl # takeout-init 里 curl 探测 /nginx-health 要用
+      - tar # 解压/打包（镜像 tar 也走它）
+      - gzip # 备份脚本里 gzip 压缩 mysqldump 输出
+
+      # —— B. 排障刚需 ——
+      - bind-utils # dig/nslookup/host：验证 MinIO / Zabbix 域名解析
+      - net-tools # netstat/ifconfig：验证端口监听
+      - iproute # ss/ip：现代网络排障（site.yml 前置检查用 ss）
+      - nmap-ncat # nc：容器网络连通性验证、Zabbix 监控项自检排错
+      - vim-enhanced # 编辑配置文件
+      - less # 看长日志
+      - bash-completion # docker / systemctl 子命令补全
+      - unzip # 解压（部分分发件只给 zip）
+      - wget # 备用下载工具
+      - tree # 核对部署目录结构
+
+      # —— D. 运维监控常用 ——
+      - htop # 进程视图（比 top 直观）
+      - iotop # IO 监控（排查 MySQL / 备份慢；需 root）
+      - iftop # 网络流量监控（需 root）
+      - tcpdump # 抓包验证 Zabbix / MinIO 通信（需 root 或 tcpdump 组）
+      - strace # 系统调用追踪（排障利器）
+      - sysstat # sar/mpstat/pidstat：性能采样、事后回溯
+    state: present
+
+- name: 渲染 chrony 配置（用国内 NTP 源，首次同步更快）
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    mode: "0644"
+  notify: 重启 chronyd
+
+- name: 启动并设开机自启 chronyd
+  ansible.builtin.systemd:
+    name: chronyd
+    state: started
+    enabled: true
+
+# 新 NTP 源要 chronyd 重启才生效，而下面就要 makestep —— 先把 handler 刷掉。
+# 与 docker role 处理镜像加速器是同一个思路：别等到 play 结束才生效。
+- name: 让 chrony 配置立即生效
+  ansible.builtin.meta: flush_handlers
+
+- name: 强制立即同步一次时间（不等轮询周期）
+  # 首次部署机器时间可能偏差很大，必须先步进校准，
+  # 否则签发出来的 JWT 一上手就因 iat/exp 越界被判无效。
+  #
+  # 上面的 flush_handlers 刚重启过 chronyd，它的控制套接字未毕就绪，
+  # 立刻执行有概率收到 "506 Cannot talk to daemon" —— 这里重试几秒兜底；
+  # 仍失败也【不让整个部署失败】：NTP 会靠 iburst 自行收敛，时间同步不是硬门槛。
+  ansible.builtin.command: chronyc makestep
+  register: chrony_makestep
+  changed_when: false
+  retries: 5
+  delay: 2
+  until: chrony_makestep.rc == 0
+  failed_when: false
+
+- name: 启用 sysstat 数据收集
+  # ★ sysstat 装上后默认【不采集】。不 enable 的话 sar 直接报
+  #   "无法打开 /var/log/sa/saXX 文件"，等于白装 —— 事后回溯性能时才发现，
+  #   那时数据已经没了，无从补救。
+  ansible.builtin.systemd:
+    name: sysstat
+    state: started
+    enabled: true
+
+- name: 统一时区为 Asia/Shanghai
+  # 与后端 Jackson(time-zone=Asia/Shanghai)、MySQL(serverTimezone=Asia/Shanghai) 对齐，
+  # 让 journalctl / 容器日志 / 数据库日志的时间戳可直接横向比对。
+  community.general.timezone:
+    name: Asia/Shanghai

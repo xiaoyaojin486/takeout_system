@@ -1,0 +1,5 @@
+---
+- name: 重启 chronyd
+  ansible.builtin.systemd:
+    name: chronyd
+    state: restarted
