@@ -1,4 +1,5 @@
 # 由 Ansible 渲染；改配置请改 group_vars 后重跑 playbook。
+# 路径固定为 zabbix_agent2.conf —— Agent2 只读这个文件，不读 zabbix_agentd.conf
 
 # 被动模式：允许 Server 主动来拉数据（本方案 Server 在 WSL2，经 SSH 隧道到达本机回环）
 Server={{ zabbix_server_ip }}
@@ -11,4 +12,4 @@ ServerActive={{ zabbix_server_active | default('') }}
 # 必须与 Zabbix Web 里创建主机时填的"主机名称"完全一致
 Hostname={{ zabbix_hostname }}
 
-Include=/etc/zabbix/zabbix_agentd.d/*.conf
+Include=/etc/zabbix/zabbix_agent2.d/*.conf

@@ -29,16 +29,24 @@
     state: present
 
 - name: 渲染 agent 主配置
+  # ★ 必须是 zabbix_agent2.conf：Agent2 只读这个文件，不读 zabbix_agentd.conf
   ansible.builtin.template:
-    src: zabbix_agentd.conf.j2
-    dest: /etc/zabbix/zabbix_agentd.conf
+    src: zabbix_agent2.conf.j2
+    dest: /etc/zabbix/zabbix_agent2.conf
     mode: "0644"
   notify: 重启 zabbix-agent2
+
+- name: 确保自定义监控项目录存在
+  # zabbix_agent2.d：Agent2 的 include 目录名，与 1.x 的 zabbix_agentd.d 不同
+  ansible.builtin.file:
+    path: /etc/zabbix/zabbix_agent2.d
+    state: directory
+    mode: "0755"
 
 - name: 投递自定义监控项
   ansible.builtin.template:
     src: userparameter_takeout.conf.j2
-    dest: /etc/zabbix/zabbix_agentd.d/userparameter_takeout.conf
+    dest: /etc/zabbix/zabbix_agent2.d/userparameter_takeout.conf
     mode: "0644"
   notify: 重启 zabbix-agent2
 
