@@ -64,6 +64,11 @@ public class WebConfig implements WebMvcConfigurer {
     /** 上传文件对外访问：把磁盘目录映射成 URL，前端 <img> 可直接引用 */
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // MinIO 模式下文件由对象存储托管、经 Nginx /files/ 反代访问，本地映射无意义且会给出错误目录
+        if (!"local".equalsIgnoreCase(fileProperties.getStorageType())) {
+            log.info("文件存储模式为 {}，跳过本地上传目录的静态资源映射", fileProperties.getStorageType());
+            return;
+        }
         Path uploadDir = Paths.get(fileProperties.getUploadPath()).toAbsolutePath().normalize();
         File dir = uploadDir.toFile();
         if (!dir.exists() && !dir.mkdirs()) {

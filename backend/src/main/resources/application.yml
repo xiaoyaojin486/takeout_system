@@ -73,9 +73,20 @@ takeout:
       - /error
       - /favicon.ico
       - /upload/**
+      - /files/**
   file:
+    # 存储实现：local(本地磁盘，开发默认) / minio(对象存储，多实例部署必须)
+    storage-type: ${FILE_STORAGE_TYPE:local}
     upload-path: ${UPLOAD_PATH:./upload}
     access-prefix: /upload
+    # MinIO 对象存储（storage-type=minio 时生效；桶与公共读策略由应用启动时自建）
+    minio:
+      endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+      bucket: ${MINIO_BUCKET:takeout}
+      access-key: ${MINIO_ACCESS_KEY:}
+      secret-key: ${MINIO_SECRET_KEY:}
+      # 对外访问前缀：Nginx 把 /files/ 反代到 MinIO 的桶
+      public-prefix: ${MINIO_PUBLIC_PREFIX:/files}
   order:
     # 未支付订单超时自动取消（分钟）
     pay-timeout-minutes: 15

@@ -7,6 +7,7 @@ import com.takeout.file.service.FileStorageService;
 import com.takeout.file.vo.UploadVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,12 +24,20 @@ import java.util.UUID;
 /**
  * 本地磁盘文件存储实现
  *
- * <p>存储路径：{@code {uploadPath}/yyyy/MM/dd/{uuid}.{ext}}，
- * 按日期分片避免单目录堆积海量文件；文件名用 UUID 重命名，防止同名互相覆盖。</p>
+ * <p>
+ * 存储路径：{@code {uploadPath}/yyyy/MM/dd/{uuid}.{ext}}，
+ * 按日期分片避免单目录堆积海量文件；文件名用 UUID 重命名，防止同名互相覆盖。
+ * </p>
+ *
+ * <p>
+ * 默认实现（{@code matchIfMissing=true}）：开发环境零依赖即可跑通上传。
+ * 多实例部署时必须改 {@code FILE_STORAGE_TYPE=minio}，否则 A 实例写本地的文件 B 实例读不到。
+ * </p>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@ConditionalOnProperty(prefix = "takeout.file", name = "storage-type", havingValue = "local", matchIfMissing = true)
 public class LocalFileStorageServiceImpl implements FileStorageService {
 
     /** 仅允许图片扩展名：既限定了业务用途，也避免上传可执行脚本 */
