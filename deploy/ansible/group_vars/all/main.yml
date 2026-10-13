@@ -81,8 +81,12 @@ configure_firewalld: true
 minio_console_bind: "0.0.0.0"
 
 # ===== Zabbix =====
-# 改成你 Zabbix Server（博客项目那台 WSL2）能被目标机访问的地址
-zabbix_server_ip: "192.168.1.50"
+# ★ SSH 隧道采集（与博客项目同一套）：WSL2 主动向目标机建 ssh -L 隧道，
+#   Server 的查询经隧道到达 Agent，来源是目标机本机回环 —— 所以这里填 127.0.0.1。
+#   好处：不依赖任何动态 IP（校园网 / WSL2 网段怎么变都不影响，SSH 通 = 隧道通）。
+zabbix_server_ip: "127.0.0.1"
+# 主动模式推送地址：被动采集留空即可（渲染出 ServerActive= 即关闭主动模式）
+zabbix_server_active: ""
 zabbix_hostname: "{{ inventory_hostname }}"
 zabbix_package: zabbix-agent2
 # Zabbix 官方仓库包；目标机不是 Rocky 9 / el9 时按官网换对应 URL

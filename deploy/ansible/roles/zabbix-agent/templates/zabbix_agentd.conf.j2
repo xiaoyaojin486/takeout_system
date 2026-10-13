@@ -1,10 +1,12 @@
 # 由 Ansible 渲染；改配置请改 group_vars 后重跑 playbook。
 
-# 被动模式：允许 Server 主动来拉数据（同局域网时最简单）
+# 被动模式：允许 Server 主动来拉数据（本方案 Server 在 WSL2，经 SSH 隧道到达本机回环）
 Server={{ zabbix_server_ip }}
 
-# 主动模式：Agent 主动把数据推给 Server（目标机在 NAT 后方时用这个）
-ServerActive={{ zabbix_server_ip }}
+# 主动模式：默认留空 = 关闭主动推送，只用被动采集（Server 经 SSH 隧道来拉，与博客项目同一套）。
+# 渲染结果为 "ServerActive="（空值合法，Agent 即不启用主动模式）；
+# 若改成 Agent 直连 Server 的场景，在 group_vars 设 zabbix_server_active 即可。
+ServerActive={{ zabbix_server_active | default('') }}
 
 # 必须与 Zabbix Web 里创建主机时填的"主机名称"完全一致
 Hostname={{ zabbix_hostname }}
