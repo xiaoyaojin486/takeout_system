@@ -40,3 +40,6 @@ Thumbs.db
 # ---------- Ansible ----------
 # 真实 inventory 含服务器 IP / 私钥路径，只提交 inventory.ini.example 模板
 deploy/ansible/inventory.ini
+# 真实密钥文件只保留 vault.yml.example 模板；vault.yml 不提交，
+# 避免填了真实密码后忘了 ansible-vault 加密就被 commit 上去
+deploy/ansible/group_vars/all/vault.yml
