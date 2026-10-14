@@ -64,19 +64,6 @@
           </el-button>
         </el-form-item>
       </el-form>
-
-      <div class="demo-account">
-        <span>演示账号：</span>
-        <el-link
-          v-for="item in demoAccounts"
-          :key="item.username"
-          type="primary"
-          :underline="false"
-          @click="fillAccount(item)"
-        >
-          {{ item.label }}
-        </el-link>
-      </div>
     </div>
   </div>
 </template>
@@ -116,20 +103,6 @@ const clientTip = computed(() =>
     ? '商家端：仅商家账号可登录，登录后进入店铺工作台'
     : '管理后台：仅平台管理员账号可登录，登录后进入平台看板'
 )
-
-const demoAccounts = computed(() =>
-  form.clientType === CLIENT_TYPE.MERCHANT
-    ? [
-        { label: 'merchant1', username: 'merchant1', password: '123456' },
-        { label: 'merchant2', username: 'merchant2', password: '123456' }
-      ]
-    : [{ label: 'admin', username: 'admin', password: '123456' }]
-)
-
-function fillAccount(item) {
-  form.username = item.username
-  form.password = item.password
-}
 
 // 切换端时清空已填账号，避免拿商家账号去登管理后台
 watch(
@@ -226,13 +199,5 @@ function isRedirectAllowed(redirect, userType) {
 
 .login-button {
   width: 100%;
-}
-
-.demo-account {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: #909399;
 }
 </style>
