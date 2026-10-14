@@ -50,13 +50,18 @@ export function orderStatusTagType(status) {
 }
 
 /**
- * 图片地址处理：后端返回形如 /upload/2026/09/24/xxx.jpg，
- * 展示时需拼接 /api 前缀；空值返回空串，由 Vant 占位样式兜底。
+ * 图片地址处理
+ * - 本地存储：后端返回 /upload/2026/09/24/xxx.jpg，需拼 /api 前缀
+ * - 对象存储：后端返回 /files/2026/09/24/xxx.jpg，由 Nginx 的 /files/ 在根路径直接反代，
+ *   不能再拼 /api（拼了会打到后端 /api/files/**，那里没有静态处理器 → 404）
+ * 空值返回空串，由 Vant 占位样式兜底。
  */
 export function resolveImage(url) {
   if (!url) return ''
   if (/^(https?:)?\/\//.test(url) || url.startsWith('data:')) return url
   if (url.startsWith(API_BASE)) return url
+  // 对象存储（MinIO）产物：/files/ 由 Nginx 根路径反代，原样返回
+  if (url.startsWith('/files')) return url
   return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`
 }
 
